@@ -29,7 +29,7 @@ object RuleEvaluator {
             return canPlayCards(playedCards, isRevolution)
         }
 
-        // スペード3のジョーカー対抗
+        // スペード3のジョーカー対抗 - 修正：単体ジョーカーの場合のみ有効
         val isSpade3Counter = fieldCards.size == 1 && fieldCards.first().isJoker &&
                 playedCards.size == 1 && playedCards.first().suit == Suit.SPADES &&
                 playedCards.first().rank == Rank.THREE
@@ -64,19 +64,36 @@ object RuleEvaluator {
         if (cards.isEmpty()) return false
         if (cards.size == 1) return true // 1枚なら問題ない
 
-        val allSameRank = cards.all { it.rank == cards.first().rank }
-        if (allSameRank) return true // 同ランクならOK（ペア、トリプル、フォーカード）
+        // ジョーカーを抜いたカード
+        val nonJokerCards = cards.filterNot { it.isJoker }
 
-        return isSequence(cards, isRevolution) // そうでなければ階段か？
+        // すべてジョーカーなら有効
+        if (nonJokerCards.isEmpty()) return true
+
+        // 同じランクの通常カードとジョーカーの組み合わせなら有効
+        if (nonJokerCards.all { it.rank == nonJokerCards.first().rank }) {
+            return true // 同ランクならOK（ペア、トリプル、フォーカード）
+        }
+
+        // 階段の場合
+        return isSequence(cards, isRevolution)
     }
 
     // --- カードの代表強さを取得（比較用）---
     fun getRepresentativeStrength(cards: List<Card>, isRevolution: Boolean): Int {
         if (cards.isEmpty()) return -1
+
+        // ジョーカーを含む場合、ジョーカーを除いたカードの強さを考慮
+        val nonJokerCards = cards.filterNot { it.isJoker }
+        if (nonJokerCards.isEmpty()) {
+            // 全てジョーカーの場合は最強
+            return 100
+        }
+
         return if (isRevolution) {
-            cards.minOf { getCardStrength(it, isRevolution) }
+            nonJokerCards.minOf { getCardStrength(it, isRevolution) }
         } else {
-            cards.maxOf { getCardStrength(it, isRevolution) }
+            nonJokerCards.maxOf { getCardStrength(it, isRevolution) }
         }
     }
 
@@ -92,41 +109,31 @@ object RuleEvaluator {
     fun isSequence(cards: List<Card>, isRevolution: Boolean): Boolean {
         if (cards.size < 3) return false // 最低3枚必要
 
-        val suits = cards.map { it.suit }.toSet()
+        // ジョーカーを含む処理
+        val jokers = cards.filter { it.isJoker }
+        val nonJokers = cards.filterNot { it.isJoker }
+
+        // 非ジョーカーが0枚または1枚なら階段にはならない
+        if (nonJokers.size <= 1) return false
+
+        // 全てのカードが同じスートかチェック（ジョーカー除く）
+        val suits = nonJokers.map { it.suit }.toSet()
         if (suits.size != 1) return false // 同じスートじゃないとダメ
 
-        val sorted = cards.sortedBy { getCardStrength(it, isRevolution) }
-        for (i in 0 until sorted.size - 1) {
-            if (sorted[i + 1].rank.defaultStrength - sorted[i].rank.defaultStrength != 1) {
-                return false
+        // 非ジョーカーカードをソート
+        val sorted = nonJokers.sortedBy { getCardStrength(it, isRevolution) }
+
+        // 必要なジョーカーの数を計算
+        var neededJokers = 0
+        var lastRank = sorted.first().rank.defaultStrength
+
+        for (i in 1 until sorted.size) {
+            val currentRank = sorted[i].rank.defaultStrength
+            val gap = currentRank - lastRank - 1
+            if (gap > 0) {
+                neededJokers += gap
             }
-        }
-        return true
-    }
-
-    // --- 革命成立チェック（特殊ルールを追加） ---
-    fun checkRevolution(playedCards: List<Card>, isRevolution: Boolean): Boolean {
-        // 基本ルール：4枚以上同じランクで革命
-        val groupedByRank = playedCards.groupBy { it.rank }
-
-        // 通常の4枚以上での革命
-        if (groupedByRank.values.any { it.size >= 4 }) {
-            return true
+            lastRank = currentRank
         }
 
-        // 特殊ルール：3枚の「3」で革命
-        val threes = groupedByRank[Rank.THREE]
-        if (threes != null && threes.size >= 3) {
-            return true
-        }
-
-        // 特殊ルール：3枚の「2」で革命返し
-        val twos = groupedByRank[Rank.TWO]
-        if (twos != null && twos.size >= 3) {
-            // 現在革命中なら革命返し、そうでなければ革命
-            return true
-        }
-
-        return false
-    }
-}
+        // ジョーカーの数が必要数以上あれば階段として有効
